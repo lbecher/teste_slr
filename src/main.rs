@@ -1,11 +1,11 @@
-use std::fmt::Error;
+use std::slice::EscapeAscii;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum Tokens {
     Mult,
     AbreP,
     FechaP,
-    Id(String),
+    Id,
     Fim,
 }
 
@@ -17,199 +17,250 @@ enum NaoTerminais {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-enum Estados {
-    I0,
-    I1,
-    I2,
-    I3,
-    I4,
-    I5,
-    I6,
-    I7,
-    I8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-enum Producoes {
-    P0,
-    P1,
-    P2,
-    P3,
-    P4,
-    P5,
-    P6,
-    P7,
-    P8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum Acoes {
-    Empilha(Estados),
-    Reduz(Producoes),
+    Empilha(usize),
+    Reduz(usize),
+    VaiPara(usize),
     Aceita,
+    Erro,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum ElementosDaPilha {
     Tokens(Tokens),
     NaoTerminais(NaoTerminais),
-    Estados(Estados),
+    Estados(usize),
 }
+
+fn main() {
+    //   (id)*id
+    let tokens = vec![
+        Tokens::AbreP,
+        Tokens::Id,
+        Tokens::FechaP,
+        Tokens::Mult,
+        Tokens::Id,
+        Tokens::Fim,
+    ];
+
+    let mut sintatico = Sintatico::inicializar(&tokens);
+
+    sintatico.analisar();
+}
+
 
 #[derive(Debug, Clone)]
 struct Sintatico {
     acoes: Vec<Acoes>,
     entrada: Vec<Tokens>,
-    estado_atual: Estados,
     pilha: Vec<ElementosDaPilha>,
-    posicao: usize,
+    simbolo_anterior: ElementosDaPilha,
 }
 
 impl Sintatico {
-    fn inicializar(entrada: Vec<Tokens>) -> Self {
+    fn inicializar(entrada: &Vec<Tokens>) -> Self {
         let mut pilha: Vec<ElementosDaPilha> = Vec::new();
-        pilha.push(ElementosDaPilha::Estados(Estados::I0));
+        pilha.push(ElementosDaPilha::Estados(0));
         Sintatico {
             acoes: Vec::new(),
-            entrada: entrada,
-            estado_atual: Estados::I0,
+            entrada: entrada.to_vec(),
             pilha: pilha,
-            posicao: 0,
+            simbolo_anterior: ElementosDaPilha::Estados(0),
         }
     }
 
-    fn analisar(&mut self) -> Result<Vec<ElementosDaPilha>, ()> {
+    fn analisar(&mut self) {
+        // possui o não terminal e a quantidade de itens de cada produção da gramaticas
+        let producoes = vec![
+            (NaoTerminais::SL, 1 as usize),
+            (NaoTerminais::T, 1 as usize),
+            (NaoTerminais::T, 3 as usize),
+            (NaoTerminais::F, 1 as usize),
+            (NaoTerminais::F, 3 as usize),
+        ];
+
+        self.pilha.push(ElementosDaPilha::Tokens(self.entrada.remove(0).clone()));
+
         loop {
-            println!("Testando {:?}", self.entrada[self.posicao]);
+            println!("Pilha: {:?}\nEntrada: {:?}", self.pilha, self.entrada);
+
             if let Ok(acao) = self.obtem_acao() {
-                self.aplica_acao(acao);
-                println!("{:?}", self.pilha);
+                println!("Ação: {:?}\n", acao);
+
                 if acao == Acoes::Aceita {
-                    return Ok(self.pilha.to_vec());
+                    println!("Deu tudo certo!");
+                    break;
                 }
-                self.posicao += 1;
+                if acao == Acoes::Erro {
+                    println!("Vish!");
+                    break;
+                }
+
+                if let Acoes::VaiPara(estado) = acao {
+                    let i = self.pilha.len() - 2;
+                    let j = self.pilha.len() - 1;
+                    self.pilha[i] = ElementosDaPilha::Estados(estado);
+                    self.pilha[j] = self.simbolo_anterior.clone();
+                } else if let Acoes::Empilha(estado) = acao {
+                    self.pilha.push(ElementosDaPilha::Estados(estado));
+                    self.pilha.push(ElementosDaPilha::Tokens(self.entrada.remove(0).clone()));
+                } else if let Acoes::Reduz(producao) = acao {
+                    // se prepara para a ação vai para
+                    self.simbolo_anterior = self.pilha[self.pilha.len() - 1].clone();
+                    // elimina elementos da pilha
+                    for _i in 0..(producoes[producao].1 + producoes[producao].1) {
+                        self.pilha.pop();
+                    }
+                    // empilha estado e o não terminal
+                    if let ElementosDaPilha::Estados(estado) = self.pilha[self.pilha.len() - 2] {
+                        self.pilha.push(ElementosDaPilha::Estados(estado));
+                    }
+                    self.pilha.push(ElementosDaPilha::NaoTerminais(producoes[producao].0));
+                }
             } else {
-                println!("Token inesperado!");
-                return Err(());
+                println!("Deu ruim no negócio tudo!");
+                break;
             }
         }
     }
-    
+
     fn obtem_acao(&mut self) -> Result<Acoes, ()> {
-        match self.estado_atual {
-            Estados::I0 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Ok(Acoes::Empilha(Estados::I4)),
-                    Tokens::FechaP => Err(()),
-                    Tokens::Fim => Err(()),
-                    Tokens::Id(_s) => Ok(Acoes::Empilha(Estados::I3)),
-                    Tokens::Mult => Err(()),
+        let mut estado: usize;
+        let mut simbolo: ElementosDaPilha;
+
+        if let ElementosDaPilha::Estados(e) = self.pilha[self.pilha.len() - 2] {
+            estado = e;
+        } else {
+            return Err(());
+        }
+
+        if let ElementosDaPilha::Tokens(s) = self.pilha[self.pilha.len() - 1] {
+            simbolo = ElementosDaPilha::Tokens(s);
+        } else if let ElementosDaPilha::NaoTerminais(s) = self.pilha[self.pilha.len() - 1] {
+            simbolo = ElementosDaPilha::NaoTerminais(s);
+        } else {
+            return Err(());
+        }
+
+        match estado {
+            0 => {
+                if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Empilha(5));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Empilha(6));
+                } else if let ElementosDaPilha::NaoTerminais(NaoTerminais::T) = simbolo {
+                    return Ok(Acoes::VaiPara(1));
+                } else if let ElementosDaPilha::NaoTerminais(NaoTerminais::F) = simbolo {
+                    return Ok(Acoes::VaiPara(4));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I1 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Err(()),
-                    Tokens::Fim => Ok(Acoes::Aceita),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Empilha(Estados::I5)),
+            1 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Empilha(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::Fim) = simbolo {
+                    return Ok(Acoes::Aceita);
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I2 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Ok(Acoes::Reduz(Producoes::P1)),
-                    Tokens::Fim => Ok(Acoes::Reduz(Producoes::P1)),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Reduz(Producoes::P1)),
+            2 => {
+                if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Empilha(5));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Empilha(6));
+                } else if let ElementosDaPilha::NaoTerminais(NaoTerminais::F) = simbolo {
+                    return Ok(Acoes::VaiPara(3));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I3 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Ok(Acoes::Reduz(Producoes::P3)),
-                    Tokens::Fim => Ok(Acoes::Reduz(Producoes::P3)),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Reduz(Producoes::P3)),
+            3 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Reduz(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Reduz(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Reduz(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::FechaP) = simbolo {
+                    return Ok(Acoes::Reduz(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::Fim) = simbolo {
+                    return Ok(Acoes::Reduz(2));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I4 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Ok(Acoes::Empilha(Estados::I4)),
-                    Tokens::FechaP => Err(()),
-                    Tokens::Fim => Err(()),
-                    Tokens::Id(_s) => Ok(Acoes::Empilha(Estados::I3)),
-                    Tokens::Mult => Err(()),
+            4 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Reduz(1));
+                } else if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Reduz(1));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Reduz(1));
+                } else if let ElementosDaPilha::Tokens(Tokens::FechaP) = simbolo {
+                    return Ok(Acoes::Reduz(1));
+                } else if let ElementosDaPilha::Tokens(Tokens::Fim) = simbolo {
+                    return Ok(Acoes::Reduz(1));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I5 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Ok(Acoes::Empilha(Estados::I4)),
-                    Tokens::FechaP => Err(()),
-                    Tokens::Fim => Err(()),
-                    Tokens::Id(_s) => Ok(Acoes::Empilha(Estados::I3)),
-                    Tokens::Mult => Err(()),
+            5 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Reduz(3));
+                } else if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Reduz(3));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Reduz(3));
+                } else if let ElementosDaPilha::Tokens(Tokens::FechaP) = simbolo {
+                    return Ok(Acoes::Reduz(3));
+                } else if let ElementosDaPilha::Tokens(Tokens::Fim) = simbolo {
+                    return Ok(Acoes::Reduz(3));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I6 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Ok(Acoes::Reduz(Producoes::P2)),
-                    Tokens::Fim => Ok(Acoes::Reduz(Producoes::P2)),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Reduz(Producoes::P2)),
+            6 => {
+                if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Empilha(5));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Empilha(6));
+                } else if let ElementosDaPilha::NaoTerminais(NaoTerminais::T) = simbolo {
+                    return Ok(Acoes::VaiPara(7));
+                } else if let ElementosDaPilha::NaoTerminais(NaoTerminais::F) = simbolo {
+                    return Ok(Acoes::VaiPara(4));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I7 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Ok(Acoes::Empilha(Estados::I8)),
-                    Tokens::Fim => Err(()),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Empilha(Estados::I5)),
+            7 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Empilha(2));
+                } else if let ElementosDaPilha::Tokens(Tokens::FechaP) = simbolo {
+                    return Ok(Acoes::Empilha(8));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
             },
-            Estados::I8 => {
-                match self.entrada[self.posicao].clone() {
-                    Tokens::AbreP => Err(()),
-                    Tokens::FechaP => Ok(Acoes::Reduz(Producoes::P4)),
-                    Tokens::Fim => Ok(Acoes::Reduz(Producoes::P4)),
-                    Tokens::Id(_s) => Err(()),
-                    Tokens::Mult => Ok(Acoes::Reduz(Producoes::P4)),
+            8 => {
+                if let ElementosDaPilha::Tokens(Tokens::Mult) = simbolo {
+                    return Ok(Acoes::Reduz(4));
+                } else if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
+                    return Ok(Acoes::Reduz(4));
+                } else if let ElementosDaPilha::Tokens(Tokens::AbreP) = simbolo {
+                    return Ok(Acoes::Reduz(4));
+                } else if let ElementosDaPilha::Tokens(Tokens::FechaP) = simbolo {
+                    return Ok(Acoes::Reduz(4));
+                } else if let ElementosDaPilha::Tokens(Tokens::Fim) = simbolo {
+                    return Ok(Acoes::Reduz(4));
+                } else {
+                    return Ok(Acoes::Erro);
                 }
+            },
+            _ => {
+                return Err(());
             },
         }
     }
-
-    fn aplica_acao(&mut self, acao: Acoes) {
-        self.acoes.push(acao);
-        match acao {
-            Acoes::Aceita => {},
-            Acoes::Empilha(estado) => {
-                self.pilha.push(ElementosDaPilha::Estados(estado));
-                self.estado_atual = estado;
-            },
-            Acoes::Reduz(_producao) => {
-                println!("Não sei o que fazer!");
-            },
-        }
-    }
-}
-
-fn main() {
-    //   ((x + y) * z)
-    let tokens = vec![
-        Tokens::AbreP,
-        Tokens::Id("x".to_string()),
-        Tokens::FechaP,
-        Tokens::Mult,
-        Tokens::Id("y".to_string()),
-        Tokens::Fim,
-    ];
-
-    let mut sintatico = Sintatico::inicializar(tokens);
-
-    let saida = sintatico.analisar().unwrap();
-
-    println!("{:?}", saida);
 }
