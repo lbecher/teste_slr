@@ -1,5 +1,3 @@
-use std::slice::EscapeAscii;
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum Tokens {
     Mult,
@@ -51,26 +49,31 @@ fn main() {
 
 #[derive(Debug, Clone)]
 struct Sintatico {
-    acoes: Vec<Acoes>,
     entrada: Vec<Tokens>,
     pilha: Vec<ElementosDaPilha>,
     simbolo_anterior: ElementosDaPilha,
+    simbolo_atual: ElementosDaPilha,
+    vai_para: bool,
 }
 
 impl Sintatico {
     fn inicializar(entrada: &Vec<Tokens>) -> Self {
         let mut pilha: Vec<ElementosDaPilha> = Vec::new();
+
+        // adiciona estado 0 à pilha
         pilha.push(ElementosDaPilha::Estados(0));
+
         Sintatico {
-            acoes: Vec::new(),
             entrada: entrada.to_vec(),
             pilha: pilha,
             simbolo_anterior: ElementosDaPilha::Estados(0),
+            simbolo_atual: ElementosDaPilha::Tokens(entrada[0].clone()),
+            vai_para: false,
         }
     }
 
     fn analisar(&mut self) {
-        // possui o não terminal e a quantidade de itens de cada produção da gramaticas
+        // vetor de tuplas que possui o não terminal e a quantidade de itens de cada produção da gramáticas
         let producoes = vec![
             (NaoTerminais::SL, 1 as usize),
             (NaoTerminais::T, 1 as usize),
@@ -79,45 +82,80 @@ impl Sintatico {
             (NaoTerminais::F, 3 as usize),
         ];
 
-        self.pilha.push(ElementosDaPilha::Tokens(self.entrada.remove(0).clone()));
+        // coloca primeiro token no símbolo atual
+        self.simbolo_atual = ElementosDaPilha::Tokens(self.entrada[0].clone());
 
         loop {
             println!("Pilha: {:?}\nEntrada: {:?}", self.pilha, self.entrada);
 
-            if let Ok(acao) = self.obtem_acao() {
+            // obtem ação com base na tabela SLR
+            if let Ok(acao) = self.obtem_acao()
+            {
                 println!("Ação: {:?}\n", acao);
 
-                if acao == Acoes::Aceita {
+                if acao == Acoes::Aceita
+                {
                     println!("Deu tudo certo!");
                     break;
                 }
-                if acao == Acoes::Erro {
+                else if let Acoes::Empilha(estado) = acao 
+                {
+                    // empilha símbolo atual na pilha
+                    self.pilha.push(self.simbolo_atual.clone());
+
+                    // empilha estado
+                    self.pilha.push(ElementosDaPilha::Estados(estado));
+                }
+                else if let Acoes::Reduz(producao) = acao
+                {
+                    // preserva não terminal
+                    self.simbolo_anterior = self.simbolo_atual.clone();
+
+                    // elimina elementos da pilha de acordo com o número de elementos da produção * 2
+                    for _i in 0..(producoes[producao].1 + producoes[producao].1) {
+                        self.pilha.pop();
+                    }
+
+                    // coloca o não terminal obtido da produção no símbolo atual
+                    self.simbolo_atual = ElementosDaPilha::NaoTerminais(producoes[producao].0);
+
+                    // empilha o não terminal
+                    self.pilha.push(ElementosDaPilha::NaoTerminais(producoes[producao].0));
+                    
+                    // ativa o modo vai para
+                    self.vai_para = true;
+                }
+                else if let Acoes::VaiPara(estado) = acao
+                {
+                    // empilha novo estado
+                    self.pilha.push(ElementosDaPilha::Estados(estado));
+
+                    // restaura não terminal
+                    self.simbolo_atual = self.simbolo_anterior.clone();
+
+                    // desativa modo vai para
+                    self.vai_para = false;
+                }
+                else
+                {
                     println!("Vish!");
                     break;
                 }
 
-                if let Acoes::VaiPara(estado) = acao {
-                    let i = self.pilha.len() - 2;
-                    let j = self.pilha.len() - 1;
-                    self.pilha[i] = ElementosDaPilha::Estados(estado);
-                    self.pilha[j] = self.simbolo_anterior.clone();
-                } else if let Acoes::Empilha(estado) = acao {
-                    self.pilha.push(ElementosDaPilha::Estados(estado));
-                    self.pilha.push(ElementosDaPilha::Tokens(self.entrada.remove(0).clone()));
-                } else if let Acoes::Reduz(producao) = acao {
-                    // se prepara para a ação vai para
-                    self.simbolo_anterior = self.pilha[self.pilha.len() - 1].clone();
-                    // elimina elementos da pilha
-                    for _i in 0..(producoes[producao].1 + producoes[producao].1) {
-                        self.pilha.pop();
+                // se token adicionado à pilha, remove da entrada
+                let index = self.pilha.len() - 2;
+                if let ElementosDaPilha::Tokens(token) = self.pilha[index]  {
+                    if ElementosDaPilha::Tokens(token) == self.simbolo_atual {
+                        // remove token da entrada
+                        self.entrada.remove(0);
+
+                        // adiciona próximo token ao símbolo atual
+                        self.simbolo_atual = ElementosDaPilha::Tokens(self.entrada[0].clone());
                     }
-                    // empilha estado e o não terminal
-                    if let ElementosDaPilha::Estados(estado) = self.pilha[self.pilha.len() - 2] {
-                        self.pilha.push(ElementosDaPilha::Estados(estado));
-                    }
-                    self.pilha.push(ElementosDaPilha::NaoTerminais(producoes[producao].0));
                 }
-            } else {
+            }
+            else
+            {
                 println!("Deu ruim no negócio tudo!");
                 break;
             }
@@ -125,23 +163,39 @@ impl Sintatico {
     }
 
     fn obtem_acao(&mut self) -> Result<Acoes, ()> {
+        // estado
         let mut estado: usize;
-        let mut simbolo: ElementosDaPilha;
+        let mut index_estado: usize;
 
-        if let ElementosDaPilha::Estados(e) = self.pilha[self.pilha.len() - 2] {
+        if self.vai_para == false {
+            index_estado = self.pilha.len() - 1;
+        } else {
+            index_estado = self.pilha.len() - 2;
+        }
+
+        if let ElementosDaPilha::Estados(e) = self.pilha[index_estado] {
             estado = e;
         } else {
+            println!("ERRO: O topo da pilha não é um estado!");
             return Err(());
         }
 
-        if let ElementosDaPilha::Tokens(s) = self.pilha[self.pilha.len() - 1] {
+        // símbolo
+        let mut simbolo: ElementosDaPilha;
+
+        if let ElementosDaPilha::Tokens(s) = self.simbolo_atual {
             simbolo = ElementosDaPilha::Tokens(s);
-        } else if let ElementosDaPilha::NaoTerminais(s) = self.pilha[self.pilha.len() - 1] {
+        } else if let ElementosDaPilha::NaoTerminais(s) = self.simbolo_atual {
             simbolo = ElementosDaPilha::NaoTerminais(s);
         } else {
+            println!("ERRO: O topo da pilha não é um símbolo de produção!");
             return Err(());
         }
 
+        // print de debub
+        println!("    Símbolo: {:?}\n    Estado: {}", simbolo, estado);
+
+        // tabela SRL
         match estado {
             0 => {
                 if let ElementosDaPilha::Tokens(Tokens::Id) = simbolo {
