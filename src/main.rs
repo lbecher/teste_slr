@@ -1,3 +1,5 @@
+use debug_print::debug_println;
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum Tokens {
     Mult,
@@ -54,6 +56,7 @@ struct Sintatico {
     simbolo_anterior: ElementosDaPilha,
     simbolo_atual: ElementosDaPilha,
     vai_para: bool,
+    modo_panico: bool,
 }
 
 impl Sintatico {
@@ -69,6 +72,7 @@ impl Sintatico {
             simbolo_anterior: ElementosDaPilha::Estados(0),
             simbolo_atual: ElementosDaPilha::Tokens(entrada[0].clone()),
             vai_para: false,
+            modo_panico: false,
         }
     }
 
@@ -82,20 +86,26 @@ impl Sintatico {
             (NaoTerminais::F, 3 as usize),
         ];
 
+        println!("---------------------------------------\nIniciando análise sintática...\n-------------\n");
+
         // coloca primeiro token no símbolo atual
         self.simbolo_atual = ElementosDaPilha::Tokens(self.entrada[0].clone());
 
         loop {
-            println!("Pilha: {:?}\nEntrada: {:?}", self.pilha, self.entrada);
+            debug_println!("Pilha: {:?}\nEntrada: {:?}", self.pilha, self.entrada);
 
             // obtem ação com base na tabela SLR
             if let Ok(acao) = self.obtem_acao()
             {
-                println!("Ação: {:?}\n", acao);
+                debug_println!("Ação: {:?}\n", acao);
 
                 if acao == Acoes::Aceita
                 {
-                    println!("Deu tudo certo!");
+                    if self.modo_panico == true {
+                        println!("-------------\nERRO SINTÁTICO: Token(s) inesperado(s) encontrado(s)!\n---------------------------------------\n");
+                    } else {
+                        println!("-------------\nAnálise sintática terminou sem erros.\n---------------------------------------\n");
+                    }
                     break;
                 }
                 else if let Acoes::Empilha(estado) = acao 
@@ -136,13 +146,21 @@ impl Sintatico {
                     // desativa modo vai para
                     self.vai_para = false;
                 }
-                else
+                else // Acoes::Erro
                 {
-                    println!("Vish!");
-                    break;
+                    println!("-------------\nERRO: Token '{:?}' inesperado!\n-------------\n", self.simbolo_atual);
+
+                    // ativa modo pânico
+                    self.modo_panico = true;
+                    
+                    // remove token da entrada
+                    self.entrada.remove(0);
+
+                    // adiciona próximo token ao símbolo atual
+                    self.simbolo_atual = ElementosDaPilha::Tokens(self.entrada[0].clone());
                 }
 
-                // se token adicionado à pilha, remove da entrada
+                // verifica se token já foi adicionado à pilha
                 let index = self.pilha.len() - 2;
                 if let ElementosDaPilha::Tokens(token) = self.pilha[index]  {
                     if ElementosDaPilha::Tokens(token) == self.simbolo_atual {
@@ -156,7 +174,7 @@ impl Sintatico {
             }
             else
             {
-                println!("Deu ruim no negócio tudo!");
+                println!("-------------\nERRO INTERNO NO ANALISADOR SINTÁTICO!!!\n---------------------------------------\n");
                 break;
             }
         }
@@ -164,8 +182,8 @@ impl Sintatico {
 
     fn obtem_acao(&mut self) -> Result<Acoes, ()> {
         // estado
-        let mut estado: usize;
-        let mut index_estado: usize;
+        let estado: usize;
+        let index_estado: usize;
 
         if self.vai_para == false {
             index_estado = self.pilha.len() - 1;
@@ -176,24 +194,21 @@ impl Sintatico {
         if let ElementosDaPilha::Estados(e) = self.pilha[index_estado] {
             estado = e;
         } else {
-            println!("ERRO: O topo da pilha não é um estado!");
+            println!("ERRO: O elemento na pilha não é um estado!");
             return Err(());
         }
 
         // símbolo
-        let mut simbolo: ElementosDaPilha;
+        let simbolo: ElementosDaPilha;
 
         if let ElementosDaPilha::Tokens(s) = self.simbolo_atual {
             simbolo = ElementosDaPilha::Tokens(s);
         } else if let ElementosDaPilha::NaoTerminais(s) = self.simbolo_atual {
             simbolo = ElementosDaPilha::NaoTerminais(s);
         } else {
-            println!("ERRO: O topo da pilha não é um símbolo de produção!");
+            println!("ERRO: O elemento na pilha não é um símbolo de produção!");
             return Err(());
         }
-
-        // print de debub
-        println!("    Símbolo: {:?}\n    Estado: {}", simbolo, estado);
 
         // tabela SRL
         match estado {
